@@ -178,7 +178,9 @@ defmodule Membrane.WebRTC.EndpointBin do
         use_default_codecs: opts.use_default_codecs,
         candidates: [],
         candidate_gathering_state: nil,
-        dtls_fingerprint: nil
+        dtls_fingerprint: nil,
+        ice_restart_msgs_queue: [],
+        ice_restart_running?: false
       }
       |> add_tracks(:inbound_tracks, opts.inbound_tracks)
       |> add_tracks(:outbound_tracks, opts.outbound_tracks)
@@ -256,6 +258,7 @@ defmodule Membrane.WebRTC.EndpointBin do
 
   @impl true
   def handle_notification({:local_credentials, credentials}, _from, _ctx, state) do
+    # tutaj jestesmy po ice restarcie
     [ice_ufrag, ice_pwd] = String.split(credentials, " ")
 
     offer =
@@ -282,6 +285,7 @@ defmodule Membrane.WebRTC.EndpointBin do
       end
 
     actions = [notify: {:signal, {:sdp_offer, to_string(offer)}}] ++ actions
+    # actions = [notify: {:signal, {:sdp_offer, to_string(offer)}}, notify: :ice_restart_ended] ++ actions
 
     {{:ok, actions}, state}
   end
@@ -322,7 +326,13 @@ defmodule Membrane.WebRTC.EndpointBin do
       end)
       |> Enum.into(%{})
 
-    actions = set_remote_credentials(sdp)
+    set_remote_credentials_actions = set_remote_credentials(sdp)
+
+    state = %{state | ice_restart_running?: false}
+    {ice_restart_acitons, state} = maybe_start_ice_restart(state)
+
+    actions = set_remote_credentials_actions ++ ice_restart_acitons
+
     {{:ok, actions}, Map.put(state, :ssrc_to_mid, ssrc_to_mid)}
   end
 
@@ -331,17 +341,26 @@ defmodule Membrane.WebRTC.EndpointBin do
     {{:ok, forward: {:ice, {:set_remote_candidate, "a=" <> candidate, 1}}}, state}
   end
 
-  @impl true
-  def handle_other({:add_tracks, tracks}, _ctx, state) do
-    state = add_tracks(state, :outbound_tracks, tracks)
-    {{:ok, forward: {:ice, :restart_stream}}, state}
-  end
+  # @impl true
+  # def handle_other({:add_tracks, tracks}, _ctx, state) do
+  #   state = add_tracks(state, :outbound_tracks, tracks)
+  #   {{:ok, forward: {:ice, :restart_stream}}, state}
+  # end
+
+  # @impl true
+  # def handle_other({:remove_tracks, tracks_ids}, _ctx, state) do
+  #   state = Map.update!(state, :outbound_tracks, &Map.drop(&1, tracks_ids))
+  #   {{:ok, forward: {:ice, :restart_stream}}, state}
+  # end
 
   @impl true
-  def handle_other({:remove_tracks, tracks_ids}, _ctx, state) do
-    state = Map.update!(state, :outbound_tracks, &Map.drop(&1, tracks_ids))
-    {{:ok, forward: {:ice, :restart_stream}}, state}
+  def handle_other(ice_restart_msg, _ctx, state) when elem(ice_restart_msg, 0) in [:add_tracks, :remove_tracks] do
+    state = Map.update!(state, :ice_restart_msgs_queue, &([ice_restart_msg] ++ &1))
+    {actions, state} = maybe_start_ice_restart(state)
+
+    {{:ok, actions}, state}
   end
+
 
   @impl true
   def handle_other({:enable_track, track_id}, _ctx, state) do
@@ -351,6 +370,37 @@ defmodule Membrane.WebRTC.EndpointBin do
   @impl true
   def handle_other({:disable_track, track_id}, _ctx, state) do
     {{:ok, forward: {{:track_filter, track_id}, :disable_track}}, state}
+  end
+
+  defp maybe_start_ice_restart(%{ice_restart_running?: true} = state) do
+    {[], state}
+  end
+
+  defp maybe_start_ice_restart(%{ice_restart_msgs_queue: []} = state) do
+    {[], state}
+  end
+
+  defp maybe_start_ice_restart(state) do
+    actions = [forward: {:ice, :restart_stream}]
+    state = start_ice_restart(state)
+    state = %{state | ice_restart_running?: true}
+
+    {actions, state}
+  end
+
+  defp start_ice_restart(state) do
+    state =
+      state.ice_restart_msgs_queue
+      |> Enum.reverse()
+      |> Enum.reduce(state, fn
+        {:add_tracks, tracks}, s ->
+          add_tracks(s, :outbound_tracks, tracks)
+
+        {:remove_tracks, tracks_ids}, s ->
+          Map.update!(s, :outbound_tracks, &Map.drop(&1, tracks_ids))
+      end)
+
+    %{state | ice_restart_msgs_queue: []}
   end
 
   defp add_tracks(state, direction, tracks) do

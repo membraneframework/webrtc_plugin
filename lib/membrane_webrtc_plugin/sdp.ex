@@ -65,10 +65,24 @@ defmodule Membrane.WebRTC.SDP do
       %Group{semantics: "BUNDLE", mids: mids}
     ]
 
+    inbound_tracks =
+      Enum.map(inbound_tracks, fn track -> {track, create_sdp_media(track, :recvonly, config)} end)
+
+    outbound_tracks =
+      Enum.map(outbound_tracks, fn track ->
+        {track, create_sdp_media(track, :sendonly, config)}
+      end)
+
+    get_mid_for_track = fn track -> Integer.parse(Map.get(mappings, track.id).mid) end
+
+    medias =
+      (inbound_tracks ++ outbound_tracks)
+      |> Enum.sort_by(fn {track, _media} -> get_mid_for_track.(track) end)
+      |> Enum.map(fn {_track, media} -> media end)
+
     %ExSDP{ExSDP.new() | timing: %ExSDP.Timing{start_time: 0, stop_time: 0}}
     |> ExSDP.add_attributes(attributes)
-    |> add_tracks(inbound_tracks, :recvonly, config)
-    |> add_tracks(outbound_tracks, :sendonly, config)
+    |> ExSDP.add_media(medias)
   end
 
   defp encoding_name_to_string(encoding_name) do
@@ -87,10 +101,6 @@ defmodule Membrane.WebRTC.SDP do
       payload_type: track_data.payload_type,
       params: track_data.params
     }
-
-  defp add_tracks(sdp, tracks, direction, config) do
-    ExSDP.add_media(sdp, Enum.map(tracks, &create_sdp_media(&1, direction, config)))
-  end
 
   defp add_standard_extensions(media) do
     case media.type do
@@ -259,7 +269,17 @@ defmodule Membrane.WebRTC.SDP do
     mapping_with_mid_and_type(mid, media_type, mapping)
   end
 
-  @spec create_track_from_sdp_media(ExSDP.Media.t(), binary) :: %{mapping: any, track: any}
+  @spec create_track_from_sdp_media(ExSDP.Media.t(), binary) ::
+          {Membrane.WebRTC.Track.t(),
+           %{
+             clock_rate: any,
+             encoding_name: :H264 | :OPUS | :VP8,
+             mid: any,
+             params: any,
+             payload_type: any,
+             track_id: binary,
+             type: any
+           }}
   def create_track_from_sdp_media(sdp_media, stream_id) do
     media_type = sdp_media.type
 
@@ -271,7 +291,7 @@ defmodule Membrane.WebRTC.SDP do
 
     track = Track.new(media_type, stream_id, opts)
 
-    %{track: track, mapping: Map.put(mapping, :track_id, track.id)}
+    {track, Map.put(mapping, :track_id, track.id)}
   end
 
   @spec filter_sdp_media(ExSDP.t(), any) :: [Media.t()]

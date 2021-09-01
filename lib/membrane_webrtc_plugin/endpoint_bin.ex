@@ -37,68 +37,70 @@ defmodule Membrane.WebRTC.EndpointBin do
   """
   @type disable_track_message :: {:disable_track, Track.id()}
 
-  def_options inbound_tracks: [
-                spec: [Membrane.WebRTC.Track.t()],
-                default: [],
-                description: "List of initial inbound tracks"
-              ],
-              outbound_tracks: [
-                spec: [Membrane.WebRTC.Track.t()],
-                default: [],
-                description: "List of initial outbound tracks"
-              ],
-              stun_servers: [
-                type: :list,
-                spec: [ExLibnice.stun_server()],
-                default: [],
-                description: "List of stun servers"
-              ],
-              turn_servers: [
-                type: :list,
-                spec: [ExLibnice.relay_info()],
-                default: [],
-                description: "List of turn servers"
-              ],
-              port_range: [
-                spec: Range.t(),
-                default: 0..0,
-                description: "Port range to be used by `Membrane.ICE.Bin`"
-              ],
-              handshake_opts: [
-                type: :list,
-                spec: Keyword.t(),
-                default: [],
-                description: """
-                Keyword list with options for handshake module. For more information please
-                refer to `Membrane.ICE.Bin`
-                """
-              ],
-              video_codecs: [
-                type: :list,
-                spec: [ExSDP.Attribute.t()],
-                default: [],
-                description: "Video codecs that will be passed for SDP offer generation"
-              ],
-              audio_codecs: [
-                type: :list,
-                spec: [ExSDP.Attribute.t()],
-                default: [],
-                description: "Audio codecs that will be passed for SDP offer generation"
-              ],
-              use_default_codecs: [
-                spec: [:audio | :video],
-                default: [:audio, :video],
-                description:
-                  "Defines whether to use default codecs or not. Default codecs are those required by WebRTC standard - OPUS, VP8 and H264"
-              ],
-              log_metadata: [
-                spec: :list,
-                spec: Keyword.t(),
-                default: [],
-                description: "Logger metadata used for endpoint bin and all its descendants"
-              ]
+  def_options(
+    inbound_tracks: [
+      spec: [Membrane.WebRTC.Track.t()],
+      default: [],
+      description: "List of initial inbound tracks"
+    ],
+    outbound_tracks: [
+      spec: [Membrane.WebRTC.Track.t()],
+      default: [],
+      description: "List of initial outbound tracks"
+    ],
+    stun_servers: [
+      type: :list,
+      spec: [ExLibnice.stun_server()],
+      default: [],
+      description: "List of stun servers"
+    ],
+    turn_servers: [
+      type: :list,
+      spec: [ExLibnice.relay_info()],
+      default: [],
+      description: "List of turn servers"
+    ],
+    port_range: [
+      spec: Range.t(),
+      default: 0..0,
+      description: "Port range to be used by `Membrane.ICE.Bin`"
+    ],
+    handshake_opts: [
+      type: :list,
+      spec: Keyword.t(),
+      default: [],
+      description: """
+      Keyword list with options for handshake module. For more information please
+      refer to `Membrane.ICE.Bin`
+      """
+    ],
+    video_codecs: [
+      type: :list,
+      spec: [ExSDP.Attribute.t()],
+      default: [],
+      description: "Video codecs that will be passed for SDP offer generation"
+    ],
+    audio_codecs: [
+      type: :list,
+      spec: [ExSDP.Attribute.t()],
+      default: [],
+      description: "Audio codecs that will be passed for SDP offer generation"
+    ],
+    use_default_codecs: [
+      spec: [:audio | :video],
+      default: [:audio, :video],
+      description:
+        "Defines whether to use default codecs or not. Default codecs are those required by WebRTC standard - OPUS, VP8 and H264"
+    ],
+    log_metadata: [
+      spec: :list,
+      spec: Keyword.t(),
+      default: [],
+      description: "Logger metadata used for endpoint bin and all its descendants"
+    ]
+  )
 
-  def_input_pad :input,
+  def_input_pad(:input,
     demand_unit: :buffers,
     caps: :any,
     availability: :on_request,
@@ -113,8 +115,9 @@ defmodule Membrane.WebRTC.EndpointBin do
         description: "Enable or disable track"
       ]
     ]
+  )
 
-  def_output_pad :output,
+  def_output_pad(:output,
     demand_unit: :buffers,
     caps: :any,
     availability: :on_request,
@@ -135,6 +138,7 @@ defmodule Membrane.WebRTC.EndpointBin do
         description: "List of tuples representing rtp extensions"
       ]
     ]
+  )
 
   @impl true
   def handle_init(opts) do
@@ -366,9 +370,7 @@ defmodule Membrane.WebRTC.EndpointBin do
     tracks_mappings =
       Enum.map(send_only_sdp_media, &SDP.create_track_from_sdp_media(&1, stream_id))
 
-    inbound_tracks = Enum.map(tracks_mappings, & &1.track)
-
-    mappings = Enum.map(tracks_mappings, & &1.mapping)
+    inbound_tracks = Enum.map(tracks_mappings, fn {track, _mapping} -> track end)
 
     old_inbound_tracks = Map.values(state.inbound_tracks)
 
@@ -376,25 +378,38 @@ defmodule Membrane.WebRTC.EndpointBin do
       old_inbound_tracks
       |> Enum.map(&Map.get(state.track_id_to_mapping, &1.id))
 
-    if new_tracks?(inbound_tracks, state),
-      do: {inbound_tracks, mappings},
-      else: {old_inbound_tracks, old_inbound_tracks_mappings}
+    case new_tracks(inbound_tracks, state) do
+      [] ->
+        {old_inbound_tracks, old_inbound_tracks_mappings}
+
+      new_inbound_tracks ->
+        tracks_ssrc = Enum.map(new_inbound_tracks, & &1.ssrc)
+
+        new_mappings =
+          tracks_mappings
+          |> Enum.filter(fn {track, _mapping} -> track.ssrc in tracks_ssrc end)
+          |> Enum.map(fn {_track, mapping} -> mapping end)
+
+        {old_inbound_tracks ++ new_inbound_tracks, old_inbound_tracks_mappings ++ new_mappings}
+    end
   end
 
-  defp new_tracks?(inbound_tracks, state) do
+  defp new_tracks(inbound_tracks, state) do
     known_ssrcs = Enum.map(state.inbound_tracks, fn {_id, track} -> track.ssrc end)
-    Enum.any?(inbound_tracks, &(&1.ssrc not in known_ssrcs))
+    Enum.filter(inbound_tracks, &(&1.ssrc not in known_ssrcs))
   end
 
   defp change_inbound_tracks(tracks, state) do
     track_id_to_track = Map.new(tracks, &{&1.id, &1})
-    state = %{state | inbound_tracks: track_id_to_track}
+    inbound_tracks = Map.merge(state.inbound_tracks, track_id_to_track)
+    state = %{state | inbound_tracks: inbound_tracks}
 
     ssrc_to_track_id = Map.new(tracks, fn track -> {track.ssrc, track.id} end)
+    ssrc_to_track_id = Map.merge(state.ssrc_to_track_id, ssrc_to_track_id)
     state = %{state | ssrc_to_track_id: ssrc_to_track_id}
 
     actions = [notify: {:new_tracks, tracks}]
-    {actions, state, tracks}
+    {actions, state, Map.values(inbound_tracks)}
   end
 
   defp get_track_id_to_mapping_by_type(mappings, tracks, type) do
@@ -407,30 +422,23 @@ defmodule Membrane.WebRTC.EndpointBin do
     end)
   end
 
-  defp get_track_id_to_mapping(sdp, inbound_mappings, outbound_tracks, old_mappings) do
+  defp get_track_id_to_mapping(sdp, inbound_mappings, outbound_tracks, _old_mappings) do
     inbound_track_id_to_mapping =
       Map.new(inbound_mappings, fn mapping -> {mapping.track_id, mapping} end)
 
     inbound_mids = Enum.map(inbound_mappings, & &1.mid)
 
-    outbound_mids = Map.values(old_mappings) |> Enum.map(& &1.mid)
-
-    old_mids = inbound_mids ++ outbound_mids
-
     mappings = SDP.get_mappings_with_mids(sdp)
 
-    new_outbound_mappings = mappings |> Enum.filter(&(&1.mid not in old_mids))
+    outbound_mappings = mappings |> Enum.filter(&(&1.mid not in inbound_mids))
 
-    outbound_tracks = outbound_tracks |> Enum.filter(&(not Map.has_key?(old_mappings, &1.id)))
+    audio_tracks = get_track_id_to_mapping_by_type(outbound_mappings, outbound_tracks, :audio)
 
-    audio_tracks = get_track_id_to_mapping_by_type(new_outbound_mappings, outbound_tracks, :audio)
-
-    video_tracks = get_track_id_to_mapping_by_type(new_outbound_mappings, outbound_tracks, :video)
+    video_tracks = get_track_id_to_mapping_by_type(outbound_mappings, outbound_tracks, :video)
 
     inbound_track_id_to_mapping
     |> Map.merge(audio_tracks)
     |> Map.merge(video_tracks)
-    |> Map.merge(old_mappings)
   end
 
   defp get_mid_to_track_id(track_id_to_mappings),
@@ -451,9 +459,10 @@ defmodule Membrane.WebRTC.EndpointBin do
     }
 
     {link_notify, state, inbound_tracks} =
-      if new_tracks?(inbound_tracks, state),
-        do: change_inbound_tracks(inbound_tracks, state),
-        else: {[], state, Map.values(state.inbound_tracks)}
+      case new_tracks(inbound_tracks, state) do
+        [] -> {[], state, Map.values(state.inbound_tracks)}
+        new_inbound_tracks -> change_inbound_tracks(new_inbound_tracks, state)
+      end
 
     answer =
       SDP.create_answer(
@@ -489,6 +498,12 @@ defmodule Membrane.WebRTC.EndpointBin do
   @impl true
   def handle_other({:signal, {:candidate, candidate}}, _ctx, state) do
     {{:ok, forward: {:ice, {:set_remote_candidate, "a=" <> candidate, 1}}}, state}
+  end
+
+  @impl true
+  def handle_other({:signal, :restart_ice}, _ctx, state) do
+    {action, state} = check_ice_status(state, true)
+    {{:ok, action}, state}
   end
 
   @impl true

@@ -199,7 +199,7 @@ defmodule Membrane.WebRTC.SDP do
       "opus" -> :OPUS
       "VP8" -> :VP8
       "H264" -> :H264
-      x -> raise "Not supported now #{x}"
+      encoding -> raise "Not supported encoding #{encoding}"
     end
   end
 

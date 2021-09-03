@@ -4,7 +4,7 @@ defmodule Membrane.WebRTC.Track do
   """
   alias Membrane.RTP
 
-  @enforce_keys [:type, :stream_id, :id, :name, :timestamp, :status]
+  @enforce_keys [:type, :stream_id, :id, :name, :timestamp]
   defstruct @enforce_keys ++ [ssrc: nil, encoding: nil, status: :ready]
 
   @type id :: String.t()
@@ -37,7 +37,6 @@ defmodule Membrane.WebRTC.Track do
   def new(type, stream_id, opts \\ []) do
     id = Keyword.get(opts, :id, Base.encode16(:crypto.strong_rand_bytes(8)))
     name = Keyword.get(opts, :name, "#{id}-#{type}-#{stream_id}")
-    ready = Keyword.get(opts, :ready?, true)
 
     %__MODULE__{
       type: type,
@@ -46,8 +45,7 @@ defmodule Membrane.WebRTC.Track do
       name: name,
       ssrc: Keyword.get(opts, :ssrc),
       encoding: Keyword.get(opts, :encoding),
-      timestamp: System.monotonic_time(),
-      ready?: ready
+      timestamp: System.monotonic_time()
     }
   end
 

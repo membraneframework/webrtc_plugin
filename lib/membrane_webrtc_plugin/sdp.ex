@@ -133,7 +133,7 @@ defmodule Membrane.WebRTC.SDP do
       | connection_data: [%ConnectionData{address: {0, 0, 0, 0}}]
     }
     |> Media.add_attributes([
-      if(track.enabled?, do: direction, else: :inactive),
+      if(track.status === :disabled, do: :inactive, else: direction),
       {:ice_ufrag, config.ice_ufrag},
       {:ice_pwd, config.ice_pwd},
       {:ice_options, "trickle"},

@@ -327,12 +327,7 @@ defmodule Membrane.WebRTC.EndpointBin do
 
     get_encoding = fn track_id -> Map.get(state.outbound_tracks, track_id).encoding end
 
-    outbound_tracks_id_to_link =
-      outbound_tracks
-      |> Enum.filter(&(&1.status === :ready))
-      |> Enum.map(& &1.id)
-
-    {outbound_track_id_to_link, outbound_tracks} = get_ready_for_linking_tracks
+    {outbound_tracks_id_to_link, outbound_tracks} = get_ready_for_linking_tracks(outbound_tracks)
 
     tracks_id_to_link_with_encoding =
       outbound_tracks_id_to_link
@@ -340,7 +335,7 @@ defmodule Membrane.WebRTC.EndpointBin do
 
     negotiations = [notify: {:negotiation_done, tracks_id_to_link_with_encoding}]
 
-    state = %{state | outbound_tracks: state.outbound}
+    state = %{state | outbound_tracks: outbound_tracks}
 
     state = %{state | ice: %{state.ice | restarting?: false}}
 
@@ -413,7 +408,7 @@ defmodule Membrane.WebRTC.EndpointBin do
   end
 
   defp get_track_id_to_fmt_mapping_by_type(medias_fmt_mappings, tracks, type) do
-    mappings = Enum.filter(medias_fmt_mappings, &(&1.media_type === type))
+    medias_fmt_mappings = Enum.filter(medias_fmt_mappings, &(&1.media_type === type))
     tracks = Enum.filter(tracks, &(&1.type === type))
 
     Enum.zip(medias_fmt_mappings, tracks)
@@ -511,7 +506,7 @@ defmodule Membrane.WebRTC.EndpointBin do
     outbound_tracks = state.outbound_tracks
 
     change_track_readiness = fn track ->
-      if Map.has_key?(outbound_tracks, track.id), do: track, else: %{track | status: :ready}
+      if Map.has_key?(outbound_tracks, track.id), do: track, else: %{track | status: :none}
     end
 
     tracks = tracks |> Enum.map(fn track -> change_track_readiness.(track) end)
@@ -542,9 +537,11 @@ defmodule Membrane.WebRTC.EndpointBin do
       outbound_tracks |> Enum.filter(&(&1.status === :ready)) |> Enum.map(& &1.id)
 
     outbound_tracks =
-      Enum.map(
+      Map.new(
         outbound_tracks,
-        fn track -> if track.status === :ready, do: %{track | status: :linked}, else: track end
+        fn track ->
+          {track.id, if(track.status === :ready, do: %{track | status: :linked}, else: track)}
+        end
       )
 
     {tracks_id_to_linking, outbound_tracks}

@@ -315,14 +315,14 @@ defmodule Membrane.WebRTC.EndpointBin do
   end
 
   @impl true
-  def handle_notification(:ice_failed, _from, _ctx, state) do
+  def handle_notification(:connection_failed, _from, _ctx, state) do
     state = %{state | ice: %{state.ice | restarting?: false}}
     {action, state} = maybe_restart_ice(state, true)
     {{:ok, action}, state}
   end
 
   @impl true
-  def handle_notification(:ice_ready, _from, _ctx, state) when state.ice.restarting? do
+  def handle_notification(:connection_ready, _from, _ctx, state) when state.ice.restarting? do
     outbound_tracks = Map.values(state.outbound_tracks) |> Enum.filter(&(&1 !== :none))
 
     get_encoding = fn track_id -> Map.get(state.outbound_tracks, track_id).encoding end
@@ -347,7 +347,7 @@ defmodule Membrane.WebRTC.EndpointBin do
   end
 
   @impl true
-  def handle_notification(:ice_ready, _from, _ctx, state) when not state.ice.restarting? do
+  def handle_notification(:connection_ready, _from, _ctx, state) when not state.ice.restarting? do
     {action, state} = maybe_restart_ice(state, true)
     {{:ok, action}, state}
   end

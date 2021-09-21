@@ -281,10 +281,14 @@ defmodule Membrane.WebRTC.EndpointBin do
       |> Enum.filter(&(&1.status != :pending))
       |> Enum.map(& &1.type)
 
-    actions = [notify: {:signal, {:offer_data, tracks_types}}]
+    types_occurences = %{
+      audio: Enum.count(tracks_types, &(&1 == :audio)),
+      video: Enum.count(tracks_types, &(&1 == :video))
+    }
+
+    actions = [notify: {:signal, {:offer_data, types_occurences}}]
 
     {{:ok, actions}, state}
-    # {:ok, state}
   end
 
   @impl true
@@ -383,12 +387,7 @@ defmodule Membrane.WebRTC.EndpointBin do
       end
 
     actions =
-      [
-        notify:
-          {:signal,
-           {:sdp_answer, to_string(answer),
-            Map.new(inbound_tracks ++ outbound_tracks, fn track -> {track.id, track.mid} end)}}
-      ] ++
+      [notify: {:signal, {:sdp_answer, to_string(answer), inbound_tracks ++ outbound_tracks}}] ++
         set_remote_credentials(sdp) ++
         actions ++ link_notify
 
@@ -398,6 +397,12 @@ defmodule Membrane.WebRTC.EndpointBin do
   @impl true
   def handle_other({:signal, {:candidate, candidate}}, _ctx, state) do
     {{:ok, forward: {:ice, {:set_remote_candidate, "a=" <> candidate, 1}}}, state}
+  end
+
+  @impl true
+  def handle_other({:signal, :restart_ice}, _ctx, state) do
+    {action, state} = maybe_restart_ice(state, true)
+    {{:ok, action}, state}
   end
 
   @impl true
